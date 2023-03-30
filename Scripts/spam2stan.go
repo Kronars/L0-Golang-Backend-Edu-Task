@@ -21,7 +21,7 @@ func main() {
 	conn := StanConn(ClusterName, ClientName)
 	defer conn.Close()
 
-	file, _ := os.Open("model_for_cli.json")
+	file, _ := os.Open("test_data.txt")
 	defer file.Close()
 
 	scanner := bufio.NewScanner(file)
