@@ -28,12 +28,9 @@ func main() {
 	defer conn.Close()
 	defer sc.Close()
 
-	// Работа с БД
+	// Инициализация БД
 	engine := db.NewEngine(User_name, User_pass, Db_name)
-	row := engine.QueryRow("SELECT 1")
-	var test int
-	row.Scan(&test)
-	fmt.Printf("[Ахтунг] База робит %d\n", test)
+	engine.CreateTables()
 
 	// Завершение работы по прерыванию
 	sigs := make(chan os.Signal, 1)
