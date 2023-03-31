@@ -82,3 +82,15 @@ func Validate(data MetaRoot) (MetaRoot, error) {
 	}
 	return data, nil
 }
+
+func MsgPrinter(m *stan.Msg) {
+	msg := string(m.Data)
+	if len(msg) > 40 {
+		repl := msg[:20]
+		repl += "... ..."
+		repl += msg[len(msg)-20:]
+		fmt.Printf("[Info] Recive msg: %s\n", repl)
+	} else {
+		fmt.Printf("[Info] Recive msg: %s\n", msg)
+	}
+}

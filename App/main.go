@@ -63,20 +63,8 @@ func NatsSide() (stan_stream.Conn, stan_stream.Subscription) {
 	return conn, sc
 }
 
-func MsgPrinter(m *stan_stream.Msg) {
-	msg := string(m.Data)
-	if len(msg) > 10 {
-		repl := msg[:20]
-		repl += "... ..."
-		repl += msg[len(msg)-20:]
-		fmt.Printf("[Info] Recive msg: %s\n", repl)
-	} else {
-		fmt.Printf("[Info] Recive msg: %s\n", msg)
-	}
-}
-
 func StanListener(m *stan_stream.Msg) {
-	// MsgPrinter(m)
+	stan.MsgPrinter(m)
 	parsed, err := stan.Parse2Struct(m)
 	if err != nil {
 		err_msg := fmt.Errorf("[Warning] Nats msg parse error: %w", err)

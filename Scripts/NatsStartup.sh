@@ -1,8 +1,8 @@
 #!/bin/bash
-echo "[Info] Nats startup"
+echo "[Init] Nats startup"
 
 cd $(go env GOPATH)/pkg/mod/github.com/nats-io/nats-streaming-server@v0.25*
 
 go run nats-streaming-server.go
 
-echo "[Info] Nats server turned off"
+echo "[Init] Nats server turned off"
