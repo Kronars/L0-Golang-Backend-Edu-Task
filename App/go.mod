@@ -4,6 +4,7 @@ go 1.20
 
 require (
 	github.com/go-playground/validator/v10 v10.12.0
+	github.com/lib/pq v1.10.4
 	github.com/nats-io/stan.go v0.10.4
 )
 

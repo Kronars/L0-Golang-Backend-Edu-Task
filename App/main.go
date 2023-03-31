@@ -5,6 +5,7 @@ import (
 	"os"
 	"os/signal"
 
+	"L0/db"
 	"L0/stan"
 	stan_stream "github.com/nats-io/stan.go"
 )
@@ -14,6 +15,56 @@ const (
 	ClientName  = "MainClient"
 	Channel     = "test"
 )
+
+const (
+	User_name = "go_client"
+	User_pass = "go_passwd"
+	Db_name   = "wb_l0"
+)
+
+func main() {
+	// Обработчик сообщений из Nats
+	conn, sc := NatsSide()
+	defer conn.Close()
+	defer sc.Close()
+
+	// Работа с БД
+	engine := db.NewEngine(User_name, User_pass, Db_name)
+	row := engine.QueryRow("SELECT 1")
+	var test int
+	row.Scan(&test)
+	fmt.Printf("[Ахтунг] База робит %d\n", test)
+
+	// Завершение работы по прерыванию
+	sigs := make(chan os.Signal, 1)
+	done := make(chan any, 1)
+
+	go func() {
+		sig := <-sigs
+		fmt.Printf("\n[Info] Signal caught - %v\n", sig)
+		done <- true
+	}()
+
+	signal.Notify(sigs, os.Interrupt)
+
+	<-done
+	fmt.Println("[Info] Пака")
+}
+
+func NatsSide() (stan_stream.Conn, stan_stream.Subscription) {
+	callback := stan.Handler(StanListener)
+
+	// Инициализация и подписка на Nats топик
+	conn := stan.StanConn(ClusterName, ClientName)
+
+	sc, err := stan.Sub(conn, Channel, callback)
+	if err != nil {
+		war := fmt.Errorf("[Warning] Subscription to the channel %s failed due to: %w", Channel, err)
+		fmt.Print(war, "\n\n")
+	}
+
+	return conn, sc
+}
 
 func MsgPrinter(m *stan_stream.Msg) {
 	msg := string(m.Data)
@@ -43,35 +94,4 @@ func StanListener(m *stan_stream.Msg) {
 		return
 	}
 	fmt.Printf("[Info] Got msg: type - %T, msg - %#v\n\n", valid, valid)
-}
-
-func main() {
-	// Обработчик сообщений из Nats
-	callback := stan.Handler(StanListener)
-
-	// Инициализация и подписка на Nats топик
-	conn := stan.StanConn(ClusterName, ClientName)
-	defer conn.Close()
-
-	sc, err := stan.Sub(conn, Channel, callback)
-	if err != nil {
-		war := fmt.Errorf("[Warning] Subscription to the channel %s failed due to: %w", Channel, err)
-		fmt.Print(war, "\n\n")
-	}
-	defer sc.Close()
-
-	// Завершение работы по прерыванию
-	sigs := make(chan os.Signal, 1)
-	done := make(chan any, 1)
-
-	signal.Notify(sigs, os.Interrupt)
-
-	go func() {
-		sig := <-sigs
-		fmt.Printf("[Info] Signal caught - %v\n", sig)
-		done <- true
-	}()
-
-	<-done
-	fmt.Println("[Info] Пака")
 }
