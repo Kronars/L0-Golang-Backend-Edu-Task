@@ -11,6 +11,13 @@ then
     exit 1
 fi
 
+if sudo service postgresql status | grep -q "down"; then
+sudo service postgresql start
+fi
+
+sudo -u postgres dropdb wb_l0
+sudo -u postgres psql -c "DROP ROLE go_client;"
+
 sudo -u postgres psql -c "CREATE USER $user_name WITH PASSWORD '$user_pass'"
 
 if [ $? -eq 0 ]
@@ -32,8 +39,5 @@ else
     echo "Ошибка при создании базы данных."
     exit 1
 fi
-
-# sudo -u postgres dropdb $db_name
-# sudo -u postgres psql -c "DROP ROLE $user_name;"
 
 exit 0

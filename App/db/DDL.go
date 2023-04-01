@@ -1,7 +1,6 @@
 package db
 
 import (
-	"database/sql"
 	"fmt"
 
 	_ "github.com/lib/pq"
@@ -10,7 +9,8 @@ import (
 const (
 	createOrderMeta = `
 CREATE TABLE IF NOT EXISTS order_meta (
-    order_uid SERIAL PRIMARY KEY,
+    order_uid VARCHAR(24) PRIMARY KEY,
+	UNIQUE(order_uid),
     track_number VARCHAR(255) NOT NULL,
     entry VARCHAR(255) NOT NULL,
     locale VARCHAR(255),
@@ -25,52 +25,37 @@ CREATE TABLE IF NOT EXISTS order_meta (
 
 	createDelivery = `
 CREATE TABLE IF NOT EXISTS delivery (
-    order_uid SERIAL PRIMARY KEY,
+    order_uid VARCHAR(24) PRIMARY KEY,
 	FOREIGN KEY (order_uid) REFERENCES order_meta(order_uid),
     data_delivery JSON NOT NULL
 );`
 
 	createPayment = `
 CREATE TABLE IF NOT EXISTS payment (
-    order_uid SERIAL PRIMARY KEY,
+    order_uid VARCHAR(24) PRIMARY KEY,
 	FOREIGN KEY (order_uid) REFERENCES order_meta(order_uid),
     data_payment JSON NOT NULL
 );`
 
+	createItem = `
+CREATE TABLE IF NOT EXISTS item (
+id_item SERIAL PRIMARY KEY,
+data_item JSON NOT NULL
+);`
+
 	createOrderItem = `
 CREATE TABLE IF NOT EXISTS order_item (
-    id_cart INTEGER REFERENCES order_meta(order_uid),
+    id_cart VARCHAR(24) REFERENCES order_meta(order_uid),
 	id_item INTEGER REFERENCES item(id_item),
 	PRIMARY KEY (id_cart, id_item)
 );`
-
-	createItem = `
-CREATE TABLE IF NOT EXISTS item (
-    id_item SERIAL PRIMARY KEY,
-    data_item JSON NOT NULL
-);`
 )
 
-func NewEngine(User_name, User_pass, Db_name string) Engine {
-	connStr := fmt.Sprintf("user=%s password=%s dbname=%s sslmode=disable options='--client_encoding=UTF8'", User_name, User_pass, Db_name)
-
-	db, err := sql.Open("postgres", connStr)
-	if err != nil {
-		err = fmt.Errorf("[Error] Cannot connect to db. connStr=%s Reason:\n%w", connStr, err)
-		panic(err)
-	}
-	return Engine{db}
-}
-
-type Engine struct {
-	db *sql.DB
-}
-
 func (e *Engine) CreateTables() {
-	declarations := []string{createOrderMeta, createDelivery, createPayment, createOrderItem, createItem}
+	declarations := []string{createOrderMeta, createDelivery, createPayment, createItem, createOrderItem}
 
 	for _, declare := range declarations {
-		_, err := e.db.Exec(declare)
+		_, err := e.DB.Exec(declare)
 		if err != nil {
 			err = fmt.Errorf(`
 [Error] Failed to create table. Reason:

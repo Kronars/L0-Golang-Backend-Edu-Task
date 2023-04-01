@@ -23,14 +23,27 @@ const (
 )
 
 func main() {
-	// Обработчик сообщений из Nats
-	conn, sc := NatsSide()
+	// Канал для пересылки данных из брокера в бд
+	json_transfer := make(chan stan.MetaRoot, 1)
+	defer close(json_transfer)
+
+	// Инициализация брокера
+	conn, sc := natsSide(json_transfer)
 	defer conn.Close()
 	defer sc.Close()
 
 	// Инициализация БД
 	engine := db.NewEngine(User_name, User_pass, Db_name)
+	defer engine.DB.Close()
+
 	engine.CreateTables()
+
+	// Компиляция запросов
+	stmts := db.CompileStmt(*engine)
+	defer stmts.CloseStmt()
+
+	// Получатель сообщений брокера - отслыает данные в бд
+	go dbSender(stmts, json_transfer)
 
 	// Завершение работы по прерыванию
 	sigs := make(chan os.Signal, 1)
@@ -48,35 +61,50 @@ func main() {
 	fmt.Println("[Info] Пака")
 }
 
-func NatsSide() (stan_stream.Conn, stan_stream.Subscription) {
-	callback := stan.Handler(StanListener)
-
-	// Инициализация и подписка на Nats топик
+// Инициализация и подписка на Nats топик
+func natsSide(out chan stan.MetaRoot) (stan_stream.Conn, stan_stream.Subscription) {
+	handler := stan.Handler{
+		Callback: stanListener,
+		Topic:    Channel,
+		Out:      out,
+	}
 	conn := stan.StanConn(ClusterName, ClientName)
 
-	sc, err := stan.Sub(conn, Channel, callback)
+	sc, err := stan.Sub(conn, handler)
 	if err != nil {
 		war := fmt.Errorf("[Warning] Subscription to the channel %s failed due to: %w", Channel, err)
 		fmt.Print(war, "\n\n")
 	}
-
 	return conn, sc
 }
 
-func StanListener(m *stan_stream.Msg) {
-	stan.MsgPrinter(m)
+// Парсинг и валидация пришедших json ов. Шлёт результат в канал out
+func stanListener(m *stan_stream.Msg, out chan<- stan.MetaRoot) {
 	parsed, err := stan.Parse2Struct(m)
 	if err != nil {
 		err_msg := fmt.Errorf("[Warning] Nats msg parse error: %w", err)
 		fmt.Print(err_msg, "\n\n")
 		return
 	}
-
 	valid, err := stan.Validate(parsed)
 	if err != nil {
 		err_msg := fmt.Errorf("[Warning] Nats msg validation error: %w", err)
 		fmt.Print(err_msg, "\n\n")
 		return
 	}
-	fmt.Printf("[Info] Got msg: type - %T, msg - %#v\n\n", valid, valid)
+	fmt.Printf("[Info] Got msg: type - %T\n", valid)
+	// stan.MsgPrinter(m)
+	out <- valid
+}
+
+// Запись полученных сообщений в базу данных
+func dbSender(stmt db.Statements, inp <-chan stan.MetaRoot) {
+	for msg := range inp {
+		id, err := stmt.SetFullOrder(&msg)
+
+		if err != nil {
+			fmt.Printf("[Warning] Error writing to the db: %s\n", err)
+		}
+		fmt.Printf("[Info] Successful db entry. Msg id - %d", id)
+	}
 }

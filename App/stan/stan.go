@@ -10,7 +10,13 @@ import (
 
 type Msg stan.Msg
 
-type Handler func(m *stan.Msg)
+// type handler func(m *stan.Msg, out chan MetaRoot)
+
+type Handler struct {
+	Callback func(m *stan.Msg, ch chan<- MetaRoot)
+	Topic    string
+	Out      chan MetaRoot
+}
 
 // Подключение к сереверу по имени клатера и клиента
 func StanConn(clusterID, clientID string) stan.Conn {
@@ -25,14 +31,14 @@ func StanConn(clusterID, clientID string) stan.Conn {
 }
 
 // Simple Async Subscriber
-func Sub(conn stan.Conn, ch string, handler Handler) (stan.Subscription, error) {
-	sc, err := conn.Subscribe(ch, func(m *stan.Msg) { handler(m) },
-		stan.StartWithLastReceived(),
-	)
+func Sub(conn stan.Conn, h Handler) (stan.Subscription, error) {
+
+	sc, err := conn.Subscribe(h.Topic, func(m *stan.Msg) { h.Callback(m, h.Out) },
+		stan.StartWithLastReceived())
 
 	if err != nil {
 		return nil, err
 	}
-	fmt.Printf("[Info] Listening channel: %s\n", ch)
+	fmt.Printf("[Info] Listening channel: %s\n", h.Topic)
 	return sc, nil
 }
