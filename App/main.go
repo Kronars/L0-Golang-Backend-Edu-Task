@@ -39,11 +39,12 @@ func main() {
 	engine.CreateTables()
 
 	// Компиляция запросов
-	stmts := db.CompileStmt(*engine)
-	defer stmts.CloseStmt()
+	q := db.MakeQuery(*engine)
+	defer q.Close()
+	defer fmt.Println("[Info] Пака")
 
 	// Получатель сообщений брокера - отслыает данные в бд
-	go dbSender(stmts, json_transfer)
+	go dbSender(q, json_transfer)
 
 	// Завершение работы по прерыванию
 	sigs := make(chan os.Signal, 1)
@@ -58,7 +59,6 @@ func main() {
 	signal.Notify(sigs, os.Interrupt)
 
 	<-done
-	fmt.Println("[Info] Пака")
 }
 
 // Инициализация и подписка на Nats топик
@@ -98,13 +98,15 @@ func stanListener(m *stan_stream.Msg, out chan<- stan.MetaRoot) {
 }
 
 // Запись полученных сообщений в базу данных
-func dbSender(stmt db.Statements, inp <-chan stan.MetaRoot) {
+func dbSender(q *db.Query, inp <-chan stan.MetaRoot) {
 	for msg := range inp {
-		id, err := stmt.SetFullOrder(&msg)
+		id, err := q.SetOrder(&msg)
 
 		if err != nil {
 			fmt.Printf("[Warning] Error writing to the db: %s\n", err)
+			return
 		}
-		fmt.Printf("[Info] Successful db entry. Msg id - %d", id)
+
+		fmt.Printf("[Info] Successful db entry. Msg id - %d\n", id)
 	}
 }
