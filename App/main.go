@@ -24,7 +24,7 @@ const (
 
 func main() {
 	// Канал для пересылки данных из брокера в бд
-	json_transfer := make(chan stan.MetaRoot, 1)
+	json_transfer := make(chan stan.MetaRoot, 64) // ? чётонадо переделать, надеятся на большой буффер будто бы плохая идея
 	defer close(json_transfer)
 
 	// Инициализация брокера
@@ -107,6 +107,6 @@ func dbSender(q *db.Query, inp <-chan stan.MetaRoot) {
 			return
 		}
 
-		fmt.Printf("[Info] Successful db entry. Msg id - %d\n", id)
+		fmt.Printf("[Info] Successful db entry. Msg id - %s\n", id)
 	}
 }

@@ -22,9 +22,11 @@ VALUES ($1, $2);`
 INSERT INTO payment (order_uid, data_payment)
 VALUES ($1, $2);`
 
+	// ! Одинаковые айтемы дублируется из за SERIAL PRIMARY KEY
+	// TODO: инсёрт ор игнор, при заказе разными людьми одного товара, запись в бд должна либо обновлятся либо игнорироваться
 	setItem = `
-INSERT INTO item (data_item)
-VALUES ($1);`
+INSERT INTO item (id_item, data_item)
+VALUES ($1, $2);`
 
 	setOrderItem = `
 INSERT INTO order_item (id_cart, id_item)
@@ -59,8 +61,8 @@ type Query struct {
 }
 
 type CRUD interface {
-	SetOrder(order *stan.MetaRoot) (id int64, err error)
-	GetOrder(id int) (order *stan.MetaRoot, err error)
+	SetOrder(order *stan.MetaRoot) (uid string, err error)
+	GetOrder(uid string) (order *stan.MetaRoot, err error)
 	Close()
 }
 
@@ -75,29 +77,29 @@ type statements struct {
 
 // Запись в бд. Поля таблиц payment, delivery, item == строковый json
 // -> поэтому при записи сериализую структуры обратно в json строки
-func (s *statements) SetOrder(order *stan.MetaRoot) (id int64, err error) {
+func (s *statements) SetOrder(order *stan.MetaRoot) (uid string, err error) {
 
 	id_meta, err_m := s.writeMeta(order)
 	if err_m != nil {
-		return -1, fmt.Errorf("failed to write meta root: %w", err_m)
+		return "", fmt.Errorf("failed to write meta root: %w", err_m)
 	}
 
 	err_n := s.writeNested(order)
 	if err != nil {
-		return -1, fmt.Errorf("failed to write delivery or payment: %w", err_n)
+		return "", fmt.Errorf("failed to write delivery or payment: %w", err_n)
 	}
 
 	err_i := s.writeItems(order)
 	if err != nil {
-		return -1, fmt.Errorf("failed to write items: %w", err_i)
+		return "", fmt.Errorf("failed to write items: %w", err_i)
 	}
 
 	return id_meta, nil
 }
 
 // Запись в таблицу order_meta
-func (s *statements) writeMeta(order *stan.MetaRoot) (int64, error) {
-	res_meta, err := s.setOrderMeta.Exec(
+func (s *statements) writeMeta(order *stan.MetaRoot) (string, error) {
+	_, err := s.setOrderMeta.Exec(
 		&order.Order_uid,
 		&order.Track_number,
 		&order.Entry,
@@ -112,10 +114,9 @@ func (s *statements) writeMeta(order *stan.MetaRoot) (int64, error) {
 	)
 
 	if err != nil {
-		return -1, err
+		return "", err
 	}
-	id_meta, _ := res_meta.RowsAffected()
-	return id_meta, nil
+	return order.Order_uid, nil
 }
 
 // Сериализация и запись вложенных структур delivery & payment
@@ -139,19 +140,14 @@ func (s *statements) writeNested(order *stan.MetaRoot) error {
 
 // Сериализация, запись item'ов и их айдишников в таблицу order_item (связь многие ко многим)
 func (s *statements) writeItems(order *stan.MetaRoot) error {
-	fmt.Println(1)
 	for _, itm := range *order.Items {
-		fmt.Println(2)
 		itm_json, _ := json.Marshal(&itm)
-		itm_res, err_i := s.setItem.Exec(itm_json)
-		fmt.Println(3)
+		_, err_i := s.setItem.Exec(itm.Chrt_id, itm_json)
 		if err_i != nil {
 			return fmt.Errorf("error during writing to the item table: %w", err_i)
 		}
-		itm_id, _ := itm_res.LastInsertId()
 
-		_, err_io := s.setOrderItem.Exec(&order.Order_uid, itm_id)
-
+		_, err_io := s.setOrderItem.Exec(&order.Order_uid, itm.Chrt_id)
 		if err_io != nil {
 			return fmt.Errorf("error during writing to the order_item table: %w", err_io)
 		}
@@ -159,7 +155,7 @@ func (s *statements) writeItems(order *stan.MetaRoot) error {
 	return nil
 }
 
-func (s *statements) GetOrder(id int) (order *stan.MetaRoot, err error) {
+func (s *statements) GetOrder(uid string) (order *stan.MetaRoot, err error) {
 	return &stan.MetaRoot{}, nil
 }
 

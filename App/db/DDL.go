@@ -39,7 +39,7 @@ CREATE TABLE IF NOT EXISTS payment (
 
 	createItem = `
 CREATE TABLE IF NOT EXISTS item (
-id_item SERIAL PRIMARY KEY,
+id_item INTEGER PRIMARY KEY,
 data_item JSON NOT NULL
 );`
 
@@ -66,3 +66,15 @@ Query: %s`, err, declare)
 	}
 	fmt.Println("[Info] Postgres tables created")
 }
+
+// Запрос для проверки
+// select order_uid,
+// d.data_delivery->'name' as name,
+// d.data_delivery->'city' as city,
+// p.data_payment->'amount' as amount,
+// i.data_item->'name' as item
+// from order_meta as om
+// join delivery as d using(order_uid)
+// join payment as p using(order_uid)
+// join order_item as oi on om.order_uid = oi.id_cart
+// join item as i using(id_item);
