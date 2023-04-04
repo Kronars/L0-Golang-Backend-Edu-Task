@@ -1,12 +1,14 @@
 package main
 
 import (
+	"encoding/json"
 	"fmt"
 	"os"
 	"os/signal"
 
 	"L0/db"
 	"L0/stan"
+
 	stan_stream "github.com/nats-io/stan.go"
 )
 
@@ -23,19 +25,14 @@ const (
 )
 
 func main() {
-	// Канал для пересылки данных из брокера в бд
-	json_transfer := make(chan stan.MetaRoot, 64) // ? чётонадо переделать, надеятся на большой буффер будто бы плохая идея
-	defer close(json_transfer)
-
-	// Инициализация брокера
-	conn, sc := natsSide(json_transfer)
-	defer conn.Close()
-	defer sc.Close()
+	// ------- Инициализация -------
+	// Кеш - карта, индекс - order_uid
+	cacheIndex := map[string]string{}
 
 	// Инициализация БД
 	engine := db.NewEngine(User_name, User_pass, Db_name)
 	defer engine.DB.Close()
-
+	// Создание таблиц. Старые не затирает
 	engine.CreateTables()
 
 	// Компиляция запросов
@@ -43,8 +40,25 @@ func main() {
 	defer q.Close()
 	defer fmt.Println("[Info] Пака")
 
-	// Получатель сообщений брокера - отслыает данные в бд
-	go dbSender(q, json_transfer)
+	// ------- Конвеер --------
+	// Последовательная выгрузка БД в кеш
+	cacheLoad(*engine, &cacheIndex)
+
+	// Инициализация брокера, подписки и обработчика: nats -> chan
+	conn, sc, nats2db := newStanConn()
+	defer sc.Close()
+	defer conn.Close()
+
+	// Обработчик: chan -> db
+	// db2cache := sendFromNats2DB(q, nats2db)
+	close(nats2db)
+
+	// Кеширование новых записей
+	// TODO: отсыл в кеш
+	// cache2front := sendFromDB2cache(db2cache)
+
+	// получение новых записей
+	// TODO: отсылать по запросу на веб сервер
 
 	// Завершение работы по прерыванию
 	sigs := make(chan os.Signal, 1)
@@ -61,12 +75,13 @@ func main() {
 	<-done
 }
 
-// Инициализация и подписка на Nats топик
-func natsSide(out chan stan.MetaRoot) (stan_stream.Conn, stan_stream.Subscription) {
+// Инициализация, подписка на Nats топик. Обработчик сообщений передаётся здесь
+func newStanConn() (stan_stream.Conn, stan_stream.Subscription, chan stan.Message) {
+	nats2db := make(chan stan.Message)
 	handler := stan.Handler{
-		Callback: stanListener,
+		Callback: natsReceiver,
 		Topic:    Channel,
-		Out:      out,
+		Out:      nats2db,
 	}
 	conn := stan.StanConn(ClusterName, ClientName)
 
@@ -75,11 +90,11 @@ func natsSide(out chan stan.MetaRoot) (stan_stream.Conn, stan_stream.Subscriptio
 		war := fmt.Errorf("[Warning] Subscription to the channel %s failed due to: %w", Channel, err)
 		fmt.Print(war, "\n\n")
 	}
-	return conn, sc
+	return conn, sc, nats2db
 }
 
 // Парсинг и валидация пришедших json ов. Шлёт результат в канал out
-func stanListener(m *stan_stream.Msg, out chan<- stan.MetaRoot) {
+func natsReceiver(m *stan_stream.Msg, out chan<- stan.Message) {
 	parsed, err := stan.Parse2Struct(m)
 	if err != nil {
 		err_msg := fmt.Errorf("[Warning] Nats msg parse error: %w", err)
@@ -92,21 +107,77 @@ func stanListener(m *stan_stream.Msg, out chan<- stan.MetaRoot) {
 		fmt.Print(err_msg, "\n\n")
 		return
 	}
-	fmt.Printf("[Info] Got msg: type - %T\n", valid)
+	fmt.Printf("[Info] Got msg from nats: type - %T\n", valid)
 	// stan.MsgPrinter(m)
-	out <- valid
+	out <- stan.Message{string(m.Data), &valid}
 }
 
 // Запись полученных сообщений в базу данных
-func dbSender(q *db.Query, inp <-chan stan.MetaRoot) {
-	for msg := range inp {
-		id, err := q.SetOrder(&msg)
+func sendFromNats2DB(q *db.Query, inp <-chan stan.Message) chan stan.Message {
+	db2cache := make(chan stan.Message)
+	defer close(db2cache)
 
+	go func() {
+		for msg := range inp {
+			_, err := q.SetOrder(msg.Json_struct)
+
+			if err != nil {
+				fmt.Printf("[Warning] Error writing to the db: %s\n", err)
+				return
+			}
+
+			db2cache <- msg
+			fmt.Println("[Info] Successful db entry")
+		}
+	}()
+
+	return db2cache
+}
+
+func cacheLoad(e db.Engine, c *map[string]string) {
+	rows, err := e.DB.Query(db.GetOrderForStr)
+	defer rows.Close()
+
+	if err != nil {
+		fmt.Printf("[Warning] Failed to SELECT data for caching %s\n", err.Error())
+	}
+
+	for rows.Next() {
+		var res stan.MetaRootString
+		err := rows.Scan(&res.Order_uid, &res.Track_number, &res.Entry,
+			&res.Internal_signature, &res.Customer_id, &res.Delivery_service,
+			&res.Shardkey, &res.Sm_id, &res.Date_created, &res.Oof_shard,
+			&res.Delivery, &res.Payment)
 		if err != nil {
-			fmt.Printf("[Warning] Error writing to the db: %s\n", err)
-			return
+			fmt.Printf("[Warning] Failed to cache row: %s\n", err.Error())
+			continue
 		}
 
-		fmt.Printf("[Info] Successful db entry. Msg id - %s\n", id)
+		order_items := make([]string, 0)
+		itm_rows, err := e.DB.Query(stan.GetAllOrderItems, res.Order_uid)
+		if err != nil {
+			fmt.Printf("[Warning] Failed to cache row: %s\n", err.Error())
+			continue
+		}
+		for itm_rows.Next() {
+			var itm string
+			err := itm_rows.Scan(&itm)
+			if err != nil {
+				fmt.Printf("[Warning] Failed to cache order item: %s\n", err.Error())
+				continue
+			}
+			order_items = append(order_items, itm)
+		}
+		res.Items = &order_items
+		res_serialized, _ := json.Marshal(res)
+		c[res.Order_uid] = res_serialized
 	}
+}
+
+// func cacheContains(key string, c *[]string) bool {
+
+// }
+
+func cacheControl() {
+
 }

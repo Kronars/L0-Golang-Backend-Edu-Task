@@ -63,6 +63,23 @@ type Item struct {
 	Status       int    `validate:"omitempty" json:"status"`
 }
 
+type MetaRootString struct {
+	Order_uid          string
+	Track_number       string
+	Entry              string
+	Locale             string
+	Internal_signature string
+	Customer_id        string
+	Delivery_service   string
+	Shardkey           string
+	Sm_id              int
+	Date_created       string
+	Oof_shard          string
+	Delivery           *string
+	Payment            *string
+	Items              *[]string
+}
+
 func Parse2Struct(m *stan.Msg) (MetaRoot, error) {
 	raw_json := m.Data
 

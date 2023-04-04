@@ -33,14 +33,27 @@ INSERT INTO order_item (id_cart, id_item)
 VALUES ($1, $2);`
 
 	// ! Это заглушка - дописать
-// 	getOrder = `
-// SELECT * FROM order_meta
-// WHERE order_uid = $1
-// FROM order_meta;`
+	GetOrderForStr = `
+SELECT 
+om.order_uid, om.track_number, om.entry, 
+d.data_delivery, p.data_payment, om.locale, om.internal_signature,
+om.customer_id, om.delivery_service, om.shardkey, om.sm_id, 
+om.date_created, om.oof_shard, d.data_delivery, p.data_payment
+FROM order_meta	AS om
+JOIN delivery	AS d 	USING(order_uid)
+JOIN payment	AS p 	USING(order_uid);`
+
+	GetAllOrderItems = `
+SELECT om.order_uid, i.data_item
+FROM order_meta AS om
+JOIN order_item AS oi ON om.order_uid = oi.id_cart
+JOIN item		AS i 	USING(id_item)
+WHERE om.order_uid = '$1';`
 )
 
 func MakeQuery(e Engine) *Query {
-	str_stmt := []string{setOrderMeta, setDelivery, setPayment, setItem, setOrderItem}
+	str_stmt := []string{setOrderMeta, setDelivery, setPayment,
+		setItem, setOrderItem}
 	cs := map[string]*sql.Stmt{} // Compiled (sql) Statements
 
 	for _, stmt := range str_stmt {
@@ -52,7 +65,8 @@ func MakeQuery(e Engine) *Query {
 		cs[stmt] = prepared
 	}
 
-	return &Query{&statements{cs[setOrderMeta], cs[setDelivery], cs[setPayment], cs[setItem], cs[setOrderItem]}}
+	return &Query{&statements{cs[setOrderMeta], cs[setDelivery],
+		cs[setPayment], cs[setItem], cs[setOrderItem]}}
 }
 
 // Встраиваение интерфейса, что бы скрыть скомпилированные запросы
@@ -78,7 +92,6 @@ type statements struct {
 // Запись в бд. Поля таблиц payment, delivery, item == строковый json
 // -> поэтому при записи сериализую структуры обратно в json строки
 func (s *statements) SetOrder(order *stan.MetaRoot) (uid string, err error) {
-
 	id_meta, err_m := s.writeMeta(order)
 	if err_m != nil {
 		return "", fmt.Errorf("failed to write meta root: %w", err_m)
