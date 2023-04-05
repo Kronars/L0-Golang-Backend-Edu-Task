@@ -1,11 +1,11 @@
 package main
 
 import (
-	"encoding/json"
 	"fmt"
 	"os"
 	"os/signal"
 
+	"L0/cache"
 	"L0/db"
 	"L0/stan"
 
@@ -34,6 +34,8 @@ func main() {
 	defer engine.DB.Close()
 	// Создание таблиц. Старые не затирает
 	engine.CreateTables()
+	// Последовательная выгрузка БД в кеш
+	cacheLoad(engine, cacheIndex)
 
 	// Компиляция запросов
 	q := db.MakeQuery(*engine)
@@ -41,17 +43,15 @@ func main() {
 	defer fmt.Println("[Info] Пака")
 
 	// ------- Конвеер --------
-	// Последовательная выгрузка БД в кеш
-	cacheLoad(*engine, &cacheIndex)
-
 	// Инициализация брокера, подписки и обработчика: nats -> chan
 	conn, sc, nats2db := newStanConn()
 	defer sc.Close()
 	defer conn.Close()
 
 	// Обработчик: chan -> db
-	// db2cache := sendFromNats2DB(q, nats2db)
-	close(nats2db)
+	// TODO: Если быстро слать - теряет заказы, спасает только буффер
+	_ = sendFromNats2DB(q, nats2db)
+	defer close(nats2db)
 
 	// Кеширование новых записей
 	// TODO: отсыл в кеш
@@ -109,13 +109,12 @@ func natsReceiver(m *stan_stream.Msg, out chan<- stan.Message) {
 	}
 	fmt.Printf("[Info] Got msg from nats: type - %T\n", valid)
 	// stan.MsgPrinter(m)
-	out <- stan.Message{string(m.Data), &valid}
+	out <- stan.Message{Json_str: string(m.Data), Json_struct: &valid}
 }
 
 // Запись полученных сообщений в базу данных
 func sendFromNats2DB(q *db.Query, inp <-chan stan.Message) chan stan.Message {
-	db2cache := make(chan stan.Message)
-	defer close(db2cache)
+	db2cache := make(chan stan.Message, 64)
 
 	go func() {
 		for msg := range inp {
@@ -134,50 +133,14 @@ func sendFromNats2DB(q *db.Query, inp <-chan stan.Message) chan stan.Message {
 	return db2cache
 }
 
-func cacheLoad(e db.Engine, c *map[string]string) {
-	rows, err := e.DB.Query(db.GetOrderForStr)
-	defer rows.Close()
-
+func cacheLoad(e *db.Engine, c map[string]string) {
+	serializedOrders, err := cache.SerAllOrders(e)
 	if err != nil {
-		fmt.Printf("[Warning] Failed to SELECT data for caching %s\n", err.Error())
+		panic(fmt.Errorf("[Error] Failed to load cache from db: %w", err))
 	}
 
-	for rows.Next() {
-		var res stan.MetaRootString
-		err := rows.Scan(&res.Order_uid, &res.Track_number, &res.Entry,
-			&res.Internal_signature, &res.Customer_id, &res.Delivery_service,
-			&res.Shardkey, &res.Sm_id, &res.Date_created, &res.Oof_shard,
-			&res.Delivery, &res.Payment)
-		if err != nil {
-			fmt.Printf("[Warning] Failed to cache row: %s\n", err.Error())
-			continue
-		}
-
-		order_items := make([]string, 0)
-		itm_rows, err := e.DB.Query(stan.GetAllOrderItems, res.Order_uid)
-		if err != nil {
-			fmt.Printf("[Warning] Failed to cache row: %s\n", err.Error())
-			continue
-		}
-		for itm_rows.Next() {
-			var itm string
-			err := itm_rows.Scan(&itm)
-			if err != nil {
-				fmt.Printf("[Warning] Failed to cache order item: %s\n", err.Error())
-				continue
-			}
-			order_items = append(order_items, itm)
-		}
-		res.Items = &order_items
-		res_serialized, _ := json.Marshal(res)
-		c[res.Order_uid] = res_serialized
+	for uid, j_str := range serializedOrders {
+		c[uid] = j_str
 	}
-}
-
-// func cacheContains(key string, c *[]string) bool {
-
-// }
-
-func cacheControl() {
-
+	fmt.Println("[Info] Successful database caching")
 }

@@ -31,24 +31,6 @@ VALUES ($1, $2);`
 	setOrderItem = `
 INSERT INTO order_item (id_cart, id_item)
 VALUES ($1, $2);`
-
-	// ! Это заглушка - дописать
-	GetOrderForStr = `
-SELECT 
-om.order_uid, om.track_number, om.entry, 
-d.data_delivery, p.data_payment, om.locale, om.internal_signature,
-om.customer_id, om.delivery_service, om.shardkey, om.sm_id, 
-om.date_created, om.oof_shard, d.data_delivery, p.data_payment
-FROM order_meta	AS om
-JOIN delivery	AS d 	USING(order_uid)
-JOIN payment	AS p 	USING(order_uid);`
-
-	GetAllOrderItems = `
-SELECT om.order_uid, i.data_item
-FROM order_meta AS om
-JOIN order_item AS oi ON om.order_uid = oi.id_cart
-JOIN item		AS i 	USING(id_item)
-WHERE om.order_uid = '$1';`
 )
 
 func MakeQuery(e Engine) *Query {
