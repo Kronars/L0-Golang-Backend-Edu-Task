@@ -4,6 +4,8 @@ import (
 	"fmt"
 	"log"
 	"math/rand"
+	"os"
+	"strconv"
 	"time"
 
 	"github.com/nats-io/stan.go"
@@ -86,12 +88,17 @@ func main() {
 	conn := StanConn(ClusterName, ClientName)
 	defer conn.Close()
 
-	for i := 0; i < 10; i++ {
-		prepared_items := genItems(rand.Intn(3), Item_template)
+	raw_n := os.Args[1]
+	n, _ := strconv.Atoi(raw_n)
+	fmt.Println("Start spamming to the test:")
+
+	for i := 0; i < n; i++ {
+		prepared_items := genItems(rand.Intn(3)+1, Item_template)
 		prepared_order := fmt.Sprintf(Order_template, randString(20), prepared_items)
 		conn.Publish(Channel, []byte(prepared_order))
-		fmt.Printf("Send %d msg's\n", i)
+		fmt.Print(".")
 	}
+	fmt.Printf("\nSent %s messages\n", raw_n)
 
 }
 
