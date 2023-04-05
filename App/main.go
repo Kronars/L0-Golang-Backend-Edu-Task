@@ -50,15 +50,15 @@ func main() {
 
 	// Обработчик: chan -> db
 	// TODO: Если быстро слать - теряет заказы, спасает только буффер
-	_ = sendFromNats2DB(q, nats2db)
+	db2cache := sendFromNats2DB(q, nats2db)
 	defer close(nats2db)
 
 	// Кеширование новых записей
-	// TODO: отсыл в кеш
-	// cache2front := sendFromDB2cache(db2cache)
+	_ = sendFromDB2cache(db2cache, cacheIndex)
 
 	// получение новых записей
 	// TODO: отсылать по запросу на веб сервер
+	// front(cache2front)
 
 	// Завершение работы по прерыванию
 	sigs := make(chan os.Signal, 1)
@@ -117,6 +117,7 @@ func sendFromNats2DB(q *db.Query, inp <-chan stan.Message) chan stan.Message {
 	db2cache := make(chan stan.Message, 64)
 
 	go func() {
+		defer close(db2cache)
 		for msg := range inp {
 			_, err := q.SetOrder(msg.Json_struct)
 
@@ -143,4 +144,23 @@ func cacheLoad(e *db.Engine, c map[string]string) {
 		c[uid] = j_str
 	}
 	fmt.Println("[Info] Successful database caching")
+}
+
+func sendFromDB2cache(in <-chan stan.Message, c map[string]string) chan stan.Message {
+	out := make(chan stan.Message, 64)
+
+	go func() {
+		defer close(out)
+		for msg := range in {
+			_, ok := c[msg.Json_struct.Order_uid]
+			if ok {
+				fmt.Printf("[Warning] Attempt to cache an already known record. uid: %s\n", msg.Json_struct.Order_uid)
+				continue
+			} else {
+				c[msg.Json_struct.Order_uid] = msg.Json_str
+			}
+		}
+	}()
+
+	return out
 }
