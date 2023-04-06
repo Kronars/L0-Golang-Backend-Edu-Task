@@ -1,6 +1,7 @@
 package main
 
 import (
+	"encoding/json"
 	"fmt"
 	"os"
 	"os/signal"
@@ -9,6 +10,8 @@ import (
 	"L0/db"
 	"L0/stan"
 
+	fiber "github.com/gofiber/fiber/v2"
+	"github.com/gofiber/template/html"
 	stan_stream "github.com/nats-io/stan.go"
 )
 
@@ -42,6 +45,13 @@ func main() {
 	defer q.Close()
 	defer fmt.Println("[Info] Пака")
 
+	// Инициализация веб сервера
+	html_engn := html.New("./front", ".html")
+	app := fiber.New(fiber.Config{
+		Views: html_engn,
+	})
+	app.Static("/js", "./front")
+
 	// ------- Конвеер --------
 	// Инициализация брокера, подписки и обработчика: nats -> chan
 	conn, sc, nats2db := newStanConn()
@@ -49,16 +59,34 @@ func main() {
 	defer conn.Close()
 
 	// Обработчик: chan -> db
-	// TODO: Если быстро слать - теряет заказы, спасает только буффер
+	// TODO: Если быстро слать - теряет заказы, пока что спасает буффер
 	db2cache := sendFromNats2DB(q, nats2db)
 	defer close(nats2db)
 
 	// Кеширование новых записей
-	_ = sendFromDB2cache(db2cache, cacheIndex)
+	sendFromDB2cache(db2cache, cacheIndex)
 
-	// получение новых записей
-	// TODO: отсылать по запросу на веб сервер
-	// front(cache2front)
+	// ------ Веб интерфейс ------
+	// AJAX запросы записей
+	app.Get("/cache/:key", func(c *fiber.Ctx) error {
+		key := c.Params("key")
+		order_struct, err := q.GetOrder(key)
+		if err != nil {
+			return c.Status(fiber.StatusNotFound).SendString(err.Error())
+		}
+		Prepare4Ser(order_struct)
+		order_string, _ := json.Marshal(order_struct)
+		return c.SendString(string(order_string))
+	})
+
+	app.Get("/*", func(c *fiber.Ctx) error {
+		return c.Render("index", fiber.Map{
+			"Amount": len(cacheIndex),
+		})
+	})
+
+	// Подъём сервера
+	go app.Listen(":8080")
 
 	// Завершение работы по прерыванию
 	sigs := make(chan os.Signal, 1)
@@ -146,11 +174,8 @@ func cacheLoad(e *db.Engine, c map[string]string) {
 	fmt.Println("[Info] Successful database caching")
 }
 
-func sendFromDB2cache(in <-chan stan.Message, c map[string]string) chan stan.Message {
-	out := make(chan stan.Message, 64)
-
+func sendFromDB2cache(in <-chan stan.Message, c map[string]string) {
 	go func() {
-		defer close(out)
 		for msg := range in {
 			_, ok := c[msg.Json_struct.Order_uid]
 			if ok {
@@ -161,6 +186,19 @@ func sendFromDB2cache(in <-chan stan.Message, c map[string]string) chan stan.Mes
 			}
 		}
 	}()
+}
 
-	return out
+// Костыль что бы корректно сериализовать уже сериализованную строку
+func Prepare4Ser(order_struct *db.MetaRootString) {
+	del_byte := json.RawMessage([]byte(*(order_struct.Delivery)))
+	pay_byte := json.RawMessage([]byte(*(order_struct.Payment)))
+	order_struct.Delivery_json = &del_byte
+	order_struct.Payment_json = &pay_byte
+
+	res := make([]json.RawMessage, 0)
+	for _, itm := range *order_struct.Items {
+		itm_raw := json.RawMessage([]byte(itm))
+		res = append(res, itm_raw)
+	}
+	order_struct.Items_json = &res
 }

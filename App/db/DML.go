@@ -22,20 +22,77 @@ VALUES ($1, $2);`
 INSERT INTO payment (order_uid, data_payment)
 VALUES ($1, $2);`
 
-	// ! Одинаковые айтемы дублируется из за SERIAL PRIMARY KEY
-	// TODO: инсёрт ор игнор, при заказе разными людьми одного товара, запись в бд должна либо обновлятся либо игнорироваться
 	setItem = `
 INSERT INTO item (id_item, data_item)
-VALUES ($1, $2);`
+VALUES ($1, $2)
+ON CONFLICT (id_item) DO NOTHING;`
 
 	setOrderItem = `
 INSERT INTO order_item (id_cart, id_item)
 VALUES ($1, $2);`
+
+	getOneOrder = `
+SELECT 
+om.order_uid, om.track_number, om.entry, om.locale, 
+om.internal_signature, om.customer_id, om.delivery_service, 
+om.shardkey, om.sm_id, om.date_created, om.oof_shard, 
+d.data_delivery, p.data_payment
+FROM order_meta	AS om
+JOIN delivery	AS d 	USING(order_uid)
+JOIN payment	AS p 	USING(order_uid)
+WHERE om.order_uid = $1;`
+
+	getAllOrderItems = `
+SELECT i.data_item
+FROM order_meta AS om
+JOIN order_item AS oi ON om.order_uid = oi.id_cart
+JOIN item		AS i 	USING(id_item)
+WHERE om.order_uid = $1;`
+
+	// Следующие два запроса не компилятся и экспортируются в cache
+	GetAllFullOrders = `
+SELECT 
+om.order_uid, om.track_number, om.entry, om.locale, 
+om.internal_signature, om.customer_id, om.delivery_service, 
+om.shardkey, om.sm_id, om.date_created, om.oof_shard, 
+d.data_delivery, p.data_payment
+FROM order_meta	AS om
+JOIN delivery	AS d 	USING(order_uid)
+JOIN payment	AS p 	USING(order_uid);`
+
+	GetAllOrderItems = `
+SELECT i.data_item
+FROM order_meta AS om
+JOIN order_item AS oi ON om.order_uid = oi.id_cart
+JOIN item		AS i 	USING(id_item)
+WHERE om.order_uid = $1;`
 )
 
+// Структура для сериализации
+type MetaRootString struct {
+	Order_uid          string             `json:"order_uid"`
+	Track_number       string             `json:"track_number"`
+	Entry              string             `json:"entry"`
+	Locale             string             `json:"locale"`
+	Internal_signature string             `json:"internal_signature"`
+	Customer_id        string             `json:"customer_id"`
+	Delivery_service   string             `json:"delivery_service"`
+	Shardkey           string             `json:"shardkey"`
+	Sm_id              int                `json:"sm_id"`
+	Date_created       string             `json:"date_created"`
+	Oof_shard          string             `json:"oof_shard"`
+	Delivery           *string            `json:"-"` // Сюда считывается из бд
+	Payment            *string            `json:"-"`
+	Items              *[]string          `json:"-"`
+	Delivery_json      *json.RawMessage   `json:"delivery"` // Сюда перекладывается из delivery для сериализации
+	Payment_json       *json.RawMessage   `json:"payment"`
+	Items_json         *[]json.RawMessage `json:"items"`
+}
+
+// Создание объекта скопилированных запросов
 func MakeQuery(e Engine) *Query {
 	str_stmt := []string{setOrderMeta, setDelivery, setPayment,
-		setItem, setOrderItem}
+		setItem, setOrderItem, getOneOrder, getAllOrderItems}
 	cs := map[string]*sql.Stmt{} // Compiled (sql) Statements
 
 	for _, stmt := range str_stmt {
@@ -48,7 +105,7 @@ func MakeQuery(e Engine) *Query {
 	}
 
 	return &Query{&statements{cs[setOrderMeta], cs[setDelivery],
-		cs[setPayment], cs[setItem], cs[setOrderItem]}}
+		cs[setPayment], cs[setItem], cs[setOrderItem], cs[getOneOrder], cs[getAllOrderItems]}}
 }
 
 // Встраиваение интерфейса, что бы скрыть скомпилированные запросы
@@ -58,17 +115,19 @@ type Query struct {
 
 type CRUD interface {
 	SetOrder(order *stan.MetaRoot) (uid string, err error)
-	GetOrder(uid string) (order *stan.MetaRoot, err error)
+	GetOrder(uid string) (order *MetaRootString, err error)
 	Close()
 }
 
 // Скомпилированные SQL запросы
 type statements struct {
-	setOrderMeta *sql.Stmt
-	setDelivery  *sql.Stmt
-	setPayment   *sql.Stmt
-	setItem      *sql.Stmt
-	setOrderItem *sql.Stmt
+	setOrderMeta     *sql.Stmt
+	setDelivery      *sql.Stmt
+	setPayment       *sql.Stmt
+	setItem          *sql.Stmt
+	setOrderItem     *sql.Stmt
+	getOneOrder      *sql.Stmt
+	getAllOrderItems *sql.Stmt
 }
 
 // Запись в бд. Поля таблиц payment, delivery, item == строковый json
@@ -150,8 +209,42 @@ func (s *statements) writeItems(order *stan.MetaRoot) error {
 	return nil
 }
 
-func (s *statements) GetOrder(uid string) (order *stan.MetaRoot, err error) {
-	return &stan.MetaRoot{}, nil
+func (s *statements) GetOrder(uid string) (order *MetaRootString, err error) {
+	order_row, err := s.getOneOrder.Query(uid)
+	if err != nil {
+		return nil, err
+	}
+
+	order_row.Next()
+	order_struct, err := ScanOrder(order_row)
+	if err != nil {
+		return nil, err
+	}
+
+	order_items_rows, _ := s.getAllOrderItems.Query(uid)
+	if err != nil {
+		return nil, err
+	}
+
+	items := make([]string, 0)
+	for order_items_rows.Next() {
+		var item string
+		_ = order_items_rows.Scan(&item)
+		items = append(items, item)
+	}
+	order_struct.Items = &items
+
+	return order_struct, nil
+}
+
+func ScanOrder(order_row *sql.Rows) (*MetaRootString, error) {
+	var res MetaRootString
+	err := order_row.Scan(&res.Order_uid, &res.Track_number, &res.Entry, &res.Locale,
+		&res.Internal_signature, &res.Customer_id, &res.Delivery_service,
+		&res.Shardkey, &res.Sm_id, &res.Date_created, &res.Oof_shard,
+		&res.Delivery, &res.Payment)
+
+	return &res, err
 }
 
 func (s *statements) Close() {

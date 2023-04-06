@@ -1,0 +1,53 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+	<script src="js/jquery-3.6.4.min.js"></script>
+    <script src="js/jquery.json-viewer.js"></script>
+    <link rel="stylesheet" href="js/jquery.json-viewer.css">
+    <style>
+        #result {
+            display: flex;
+            justify-content: center;
+            /* align-items: center; */
+            /* position: relative;
+            left: 33%; */
+        }
+        .center {    
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            margin: 10px;
+        }
+        .hint {
+            color: gray;
+            font-size: small;
+        }
+    </style>
+    <title>Document</title>
+</head>
+<body>
+    <div class="center title">
+        <h1>Поиск по кешу</h1>
+    </div>
+    <div class="center">
+        Кешированно {{.Amount}} записей
+    </div>
+
+    <div class="center" style="align-items: flex-start;">
+        <form id="search">
+            <label>
+                <div class="hint">
+                    Ввведите <tt>order_uid</tt><br>
+                    например: <tt id="uid_example">rfrYVpHAgX4X5vdRKChob2</tt><br/>
+                </div>
+            </label>
+            <input  type="text" id="input" size="22" >
+            <button type="submit">Найти</button>
+        </form> 
+    </div>
+ 
+<script src="js/form.js"></script>
+</body>
+</html>

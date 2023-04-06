@@ -6,50 +6,6 @@ import (
 	"fmt"
 )
 
-const (
-	GetOrderForStr = `
-SELECT 
-om.order_uid, om.track_number, om.entry, om.locale, 
-om.internal_signature, om.customer_id, om.delivery_service, 
-om.shardkey, om.sm_id, om.date_created, om.oof_shard, 
-d.data_delivery, p.data_payment
-FROM order_meta	AS om
-JOIN delivery	AS d 	USING(order_uid)
-JOIN payment	AS p 	USING(order_uid);`
-
-	GetAllOrderItems = `
-SELECT i.data_item
-FROM order_meta AS om
-JOIN order_item AS oi ON om.order_uid = oi.id_cart
-JOIN item		AS i 	USING(id_item)
-WHERE om.order_uid = $1;`
-)
-
-// PREPARE test (text) AS
-// 	SELECT i.data_item
-// 	FROM order_meta AS om
-// 	JOIN order_item AS oi ON om.order_uid = oi.id_cart
-// 	JOIN item		AS i 	USING(id_item)
-// 	WHERE om.order_uid = $1;
-
-// Структура для преобразования в
-type metaRootString struct {
-	order_uid          string
-	track_number       string
-	entry              string
-	locale             string
-	internal_signature string
-	customer_id        string
-	delivery_service   string
-	shardkey           string
-	sm_id              int
-	date_created       string
-	oof_shard          string
-	Delivery           *string   `json:"delivery"`
-	Payment            *string   `json:"payment"`
-	Items              *[]string `json:"items"`
-}
-
 // По скольку заказы и товары хранятся отдельно:
 // селект всех заказов -> селект всех товаров каждого заказа -> сериализация -> кеширование
 func SerAllOrders(e *db.Engine) (map[string]string, error) {
@@ -73,34 +29,30 @@ func SerAllOrders(e *db.Engine) (map[string]string, error) {
 }
 
 // Получение всех заказов, поле items - пустое
-func getAllOrders(e *db.Engine) ([]*metaRootString, error) {
-	orders, err := e.DB.Query(GetOrderForStr)
+func getAllOrders(e *db.Engine) ([]*db.MetaRootString, error) {
+	orders, err := e.DB.Query(db.GetAllFullOrders)
 	if err != nil {
 		return nil, err
 	}
 	defer orders.Close()
 
-	ordersStruct := make([]*metaRootString, 0)
+	ordersStruct := make([]*db.MetaRootString, 0)
 
 	for orders.Next() {
-		var res metaRootString
-		err := orders.Scan(&res.order_uid, &res.track_number, &res.entry, &res.locale,
-			&res.internal_signature, &res.customer_id, &res.delivery_service,
-			&res.shardkey, &res.sm_id, &res.date_created, &res.oof_shard,
-			&res.Delivery, &res.Payment)
+		res, err := db.ScanOrder(orders)
 		if err != nil {
 			fmt.Printf("[Warning] Failed to cache row: %s\n", err.Error())
 			continue
 		}
-		ordersStruct = append(ordersStruct, &res)
+		ordersStruct = append(ordersStruct, res)
 	}
 	return ordersStruct, nil
 }
 
 // Получение товаров каждого заказа. Заполняет оставшиееся поле items структуры
-func catItems2orders(e *db.Engine, cropOrders []*metaRootString) ([]*metaRootString, error) {
+func catItems2orders(e *db.Engine, cropOrders []*db.MetaRootString) ([]*db.MetaRootString, error) {
 	for _, order := range cropOrders {
-		itm_rows, err := e.DB.Query(GetAllOrderItems, order.order_uid)
+		itm_rows, err := e.DB.Query(db.GetAllOrderItems, order.Order_uid)
 		if err != nil {
 			return cropOrders, err // Типа если у заказа отвалилсь все товары - полная отмена
 		}
@@ -124,14 +76,14 @@ func catItems2orders(e *db.Engine, cropOrders []*metaRootString) ([]*metaRootStr
 }
 
 // Проходит по списку, сериализует структуры в строки
-func serializeOrders(orders []*metaRootString) (map[string]string, error) {
+func serializeOrders(orders []*db.MetaRootString) (map[string]string, error) {
 	serialized := make(map[string]string, 0)
 	for _, order := range orders {
 		res, err := json.Marshal(order)
 		if err != nil {
 			return nil, err
 		}
-		serialized[order.order_uid] = string(res)
+		serialized[order.Order_uid] = string(res)
 	}
 	return serialized, nil
 }
