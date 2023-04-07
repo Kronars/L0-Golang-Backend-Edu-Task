@@ -2,7 +2,6 @@ const form = document.querySelector('#search');
 const input = document.querySelector('#input');
 const result = document.querySelector('#result')
 
-
 form.addEventListener('submit', (event) => {
     event.preventDefault();
     
@@ -29,7 +28,7 @@ function showData(status, data) {
     // Удалить все ранее созданные элементы
     while (result.firstChild) {
         result.removeChild(result.firstChild);
-      }
+    }
 
     if (status != 200) {
         err_containter = document.createElement('p');

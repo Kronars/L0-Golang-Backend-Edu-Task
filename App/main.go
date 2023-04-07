@@ -46,11 +46,12 @@ func main() {
 	defer fmt.Println("[Info] Пака")
 
 	// Инициализация веб сервера
-	html_engn := html.New("./front", ".html")
+	html_engn := html.New("./front", ".html") //
 	app := fiber.New(fiber.Config{
-		Views: html_engn,
+		Views:   html_engn,
+		AppName: "L0",
 	})
-	app.Static("/js", "./front")
+	app.Static("/js", "./front/js")
 
 	// ------- Конвеер --------
 	// Инициализация брокера, подписки и обработчика: nats -> chan
