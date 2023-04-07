@@ -43,7 +43,6 @@ func main() {
 	// Компиляция запросов
 	q := db.MakeQuery(*engine)
 	defer q.Close()
-	defer fmt.Println("[Info] Пака")
 
 	// Инициализация веб сервера
 	html_engn := html.New("./front", ".html") //
@@ -60,12 +59,11 @@ func main() {
 	defer conn.Close()
 
 	// Обработчик: chan -> db
-	// TODO: Если быстро слать - теряет заказы, пока что спасает буффер
 	db2cache := sendFromNats2DB(q, nats2db)
 	defer close(nats2db)
 
 	// Кеширование новых записей
-	sendFromDB2cache(db2cache, cacheIndex)
+	SendFromDB2cache(db2cache, cacheIndex)
 
 	// ------ Веб интерфейс ------
 	// AJAX запросы записей
@@ -79,7 +77,7 @@ func main() {
 		order_string, _ := json.Marshal(order_struct)
 		return c.SendString(string(order_string))
 	})
-
+	// Основная страница
 	app.Get("/*", func(c *fiber.Ctx) error {
 		return c.Render("index", fiber.Map{
 			"Amount": len(cacheIndex),
@@ -136,7 +134,7 @@ func natsReceiver(m *stan_stream.Msg, out chan<- stan.Message) {
 		fmt.Print(err_msg, "\n\n")
 		return
 	}
-	fmt.Printf("[Info] Got msg from nats: type - %T\n", valid)
+	fmt.Println("[Info] Got msg from nats.")
 	// stan.MsgPrinter(m)
 	out <- stan.Message{Json_str: string(m.Data), Json_struct: &valid}
 }
@@ -175,7 +173,8 @@ func cacheLoad(e *db.Engine, c map[string]string) {
 	fmt.Println("[Info] Successful database caching")
 }
 
-func sendFromDB2cache(in <-chan stan.Message, c map[string]string) {
+// Читает канал и дополняет карту кеша
+func SendFromDB2cache(in <-chan stan.Message, c map[string]string) {
 	go func() {
 		for msg := range in {
 			_, ok := c[msg.Json_struct.Order_uid]
